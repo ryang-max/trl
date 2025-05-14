@@ -43,7 +43,7 @@ from transformers import (
 )
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.trainer_utils import seed_worker
-from transformers.utils import is_datasets_available, is_peft_available, is_rich_available
+from transformers.utils import is_datasets_available, is_peft_available, is_rich_available, to_py_obj
 
 from ..data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from ..extras.profiling import profiling_context, profiling_decorator
@@ -1098,10 +1098,25 @@ class GRPOTrainer(Trainer):
                 (self.accelerator.process_index + 1) * len(prompts),
             )
             completion_ids = completion_ids[process_slice]
-
+            for seq in completion_ids:
+                if isinstance(seq, list):
+                    for ids in seq:
+                        if isinstance(ids, list):
+                            for id in ids:
+                                if not isinstance(id, int):
+                                    print(f"0 Not int: {id}")
+                                    raise ValueError(f"Not int: {id}")
             # Pad the completions, and concatenate them with the prompts
-            completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
+            completion_ids = [torch.tensor(ids, device=device, dtype=torch.int64) for ids in completion_ids]
+            for seq in completion_ids:
+                if seq.dtype != torch.int32 and seq.dtype != torch.int64 and seq.numel() > 0:
+                    print(f"1 Not int: {seq}, {seq.dtype}")
+                    raise ValueError(f"Not int: {to_py_obj(seq)}")
             completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
+            for seq in completion_ids:
+                if seq.dtype != torch.int32 and seq.dtype != torch.int64 and seq.numel() > 0:
+                    print(f"2 Not int: {seq.dtype}, {seq}, {self.processing_class.pad_token_id}")
+                    raise ValueError(f"Not int: {to_py_obj(seq)}")
             prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         elif self.use_vllm:
             # First, update the vLLM weights if needed
@@ -1236,6 +1251,24 @@ class GRPOTrainer(Trainer):
                 old_per_token_logps = None
 
         # Decode the generated completions
+        try:
+            for seq in completion_ids:
+                seq = to_py_obj(seq)
+                if not isinstance(seq, int):
+                    if isinstance(seq, float):
+                        print(f"Warning: {seq} is a float, not an int.")
+                        print(f"Completion IDs: {completion_ids}")
+                        print(f"Prompts: {all_prompts_text}")
+                    else:
+                        for id in seq:
+                            if not isinstance(id, int):
+                                print(f"Warning: {id} is not an int.")
+                                print(f"Completion IDs: {completion_ids}")
+                                print(f"Prompts: {all_prompts_text}")
+        except TypeError:
+            print(f"Error: {completion_ids} is not iterable.")
+            print(f"Prompts: {all_prompts_text}")
+            
         completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
         if is_conversational(inputs[0]):
             completions = []
