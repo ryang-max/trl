@@ -1100,7 +1100,7 @@ class GRPOTrainer(Trainer):
             completion_ids = completion_ids[process_slice]
 
             # Pad the completions, and concatenate them with the prompts
-            completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
+            completion_ids = [torch.tensor(ids, device=device, dtype=torch.int64) for ids in completion_ids]
             completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
             prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
         elif self.use_vllm:
@@ -1236,6 +1236,7 @@ class GRPOTrainer(Trainer):
                 old_per_token_logps = None
 
         # Decode the generated completions
+        
         completions_text = self.processing_class.batch_decode(completion_ids, skip_special_tokens=True)
         if is_conversational(inputs[0]):
             completions = []
